@@ -5,11 +5,28 @@ Computes reading statistics for a user: streak, books finished this month,
 and total pages read.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, tzinfo
+from zoneinfo import ZoneInfo
 from services import reading_service
 
 
-def calculate_streak(user_id: str) -> int:
+def _coerce_timezone(user_timezone: str | tzinfo) -> tzinfo:
+    if isinstance(user_timezone, str):
+        return ZoneInfo(user_timezone)
+    return user_timezone
+
+
+def _as_utc(timestamp: datetime) -> datetime:
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc)
+
+
+def calculate_streak(
+    user_id: str,
+    user_timezone: str | tzinfo = timezone.utc,
+    today: date | None = None,
+) -> int:
     """
     Calculate a user's current reading streak in consecutive days.
 
@@ -22,6 +39,10 @@ def calculate_streak(user_id: str) -> int:
 
     Args:
         user_id: ID of the user.
+        user_timezone: Timezone used to convert UTC finish timestamps into the
+            user's local calendar dates.
+        today: User-local date to count back from. Defaults to the current date
+            in user_timezone.
 
     Returns:
         The streak count as an integer.
@@ -30,13 +51,16 @@ def calculate_streak(user_id: str) -> int:
     if not events:
         return 0
 
+    local_timezone = _coerce_timezone(user_timezone)
+
     # Collect unique reading dates, most recent first.
     dates = sorted(
-        set(e.started_at.date() for e in events),
+        set(_as_utc(e.finished_at).astimezone(local_timezone).date() for e in events),
         reverse=True,
     )
 
-    today = date.today()
+    if today is None:
+        today = datetime.now(local_timezone).date()
 
     # Streak must start from today or yesterday — otherwise it has already broken.
     if (today - dates[0]).days > 1:
